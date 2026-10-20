@@ -1,0 +1,36 @@
+# Local performance lab: the API under test + the k6 load generator.
+#
+#   docker compose up -d api                              # start the API
+#   docker compose run --rm k6 run tests/smoke.ts         # run a test
+#   docker compose down                                   # stop everything
+#
+# Never point load tests at the public Restful-Booker: it is shared by everyone.
+
+services:
+  api:
+    image: mwinteringham/restfulbooker:latest
+    ports:
+      - '3001:3001'
+    # Fixed resources, so results are comparable between machines and runs.
+    cpus: 1.0
+    mem_limit: 512m
+    healthcheck:
+      test: ['CMD', 'wget', '-qO-', 'http://localhost:3001/ping']
+      interval: 5s
+      timeout: 3s
+      retries: 12
+
+  k6:
+    image: grafana/k6:2.3.0
+    profiles: ['tools'] # not started by `docker compose up`, only by `docker compose run`
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      BASE_URL: http://api:3001
+      K6_WEB_DASHBOARD: 'true'
+      K6_WEB_DASHBOARD_HOST: 0.0.0.0 # reachable from the host with -p 5665:5665
+    volumes:
+      - .:/work
+    working_dir: /work
+    user: root # write access to ./reports on the bind mount

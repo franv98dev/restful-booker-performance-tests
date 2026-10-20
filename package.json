@@ -1,0 +1,34 @@
+{
+  "name": "restful-booker-performance-tests",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Performance testing of the Restful-Booker API with k6, TypeScript and Docker: load, stress, spike, soak and breakpoint tests with SLO thresholds and published reports.",
+  "author": "Francisco Varela",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "api:up": "docker compose up -d api",
+    "api:down": "docker compose down",
+    "test:smoke": "docker compose run --rm k6 run tests/smoke.ts",
+    "test:load": "docker compose run --rm -e K6_WEB_DASHBOARD_EXPORT=reports/load-report.html k6 run tests/load.ts",
+    "test:stress": "docker compose run --rm -e K6_WEB_DASHBOARD_EXPORT=reports/stress-report.html k6 run tests/stress.ts",
+    "test:spike": "docker compose run --rm -e K6_WEB_DASHBOARD_EXPORT=reports/spike-report.html k6 run tests/spike.ts",
+    "test:soak": "docker compose run --rm -e K6_WEB_DASHBOARD_EXPORT=reports/soak-report.html k6 run tests/soak.ts",
+    "test:breakpoint": "docker compose run --rm -e K6_WEB_DASHBOARD_EXPORT=reports/breakpoint-report.html k6 run tests/breakpoint.ts",
+    "site": "node scripts/build-site.mjs",
+    "typecheck": "tsc",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "check": "npm run typecheck && npm run lint && npm run format:check"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/k6": "^2.2.1",
+    "eslint": "^10.11.0",
+    "eslint-config-prettier": "^10.1.8",
+    "prettier": "^3.9.8",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.70.1"
+  }
+}

@@ -1,0 +1,10 @@
+node_modules/
+reports/*
+!reports/.gitkeep
+site/
+.env
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/extensions.json
+.idea/

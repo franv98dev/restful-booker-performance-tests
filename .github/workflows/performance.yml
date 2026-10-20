@@ -1,0 +1,153 @@
+name: Performance Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Nightly suite (05:00 UTC): smoke, load, spike and stress, published to GitHub Pages.
+    - cron: '0 5 * * *'
+  workflow_dispatch:
+    inputs:
+      test:
+        description: 'What to run'
+        type: choice
+        default: nightly-suite
+        options: [nightly-suite, smoke, load, spike, stress, soak, breakpoint]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  K6_IMAGE: grafana/k6:2.3.0
+
+jobs:
+  quality:
+    name: Typecheck, lint & format
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+
+  performance:
+    name: ${{ github.event_name == 'schedule' && 'nightly-suite' || github.event.inputs.test || 'smoke' }}
+    needs: quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    # The API under test runs next to the job, with fixed resources, so results are
+    # comparable between runs. Load is never sent to the public Restful-Booker.
+    services:
+      api:
+        image: mwinteringham/restfulbooker:latest
+        ports:
+          - 3001:3001
+        options: >-
+          --cpus 1
+          --memory 512m
+          --health-cmd "wget -qO- http://localhost:3001/ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 12
+    env:
+      # Push and pull requests run the smoke test; nightly runs the whole suite.
+      TESTS: >-
+        ${{ github.event_name == 'schedule' && 'smoke load spike stress'
+        || (github.event.inputs.test == 'nightly-suite' && 'smoke load spike stress')
+        || github.event.inputs.test
+        || 'smoke' }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Run k6
+        run: |
+          mkdir -p reports && chmod 777 reports
+          status=0
+          for test in $TESTS; do
+            echo "::group::k6 run tests/$test.ts"
+            set +e
+            docker run --rm --network host -u root \
+              -v "$PWD:/work" -w /work \
+              -e BASE_URL=http://localhost:3001 \
+              -e K6_WEB_DASHBOARD=true \
+              -e K6_WEB_DASHBOARD_EXPORT="reports/$test-report.html" \
+              -e DURATION -e STEP \
+              "$K6_IMAGE" run "tests/$test.ts"
+            code=$?
+            set -e
+            echo "::endgroup::"
+            # Exit code 99 = thresholds crossed. For the breakpoint test that is the goal.
+            if [ "$code" -ne 0 ] && ! { [ "$test" = breakpoint ] && [ "$code" -eq 99 ]; }; then
+              echo "::error title=$test::k6 exited with code $code (99 = SLO thresholds breached)"
+              status=1
+            fi
+            [ -f "reports/$test-summary.md" ] && cat "reports/$test-summary.md" >> "$GITHUB_STEP_SUMMARY"
+          done
+          exit $status
+        env:
+          # Shorter durations in CI keep the nightly suite around 15 minutes.
+          DURATION: ${{ github.event.inputs.test == 'soak' && '20m' || '3m' }}
+          STEP: 45s
+
+      - name: Upload reports
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: k6-reports
+          path: reports/
+          retention-days: 14
+
+      - uses: actions/setup-node@v5
+        if: ${{ !cancelled() }}
+        with:
+          node-version-file: .nvmrc
+      - name: Build results site
+        if: ${{ !cancelled() }}
+        run: node scripts/build-site.mjs
+      - name: Upload site
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: site
+          path: site/
+          retention-days: 14
+
+  # Publishes the nightly suite to GitHub Pages (never from pull requests or single tests,
+  # so the page always shows a complete run).
+  deploy:
+    name: Deploy results to GitHub Pages
+    needs: performance
+    if: >-
+      ${{ !cancelled() && github.ref == 'refs/heads/main' &&
+      (github.event_name == 'schedule' || github.event.inputs.test == 'nightly-suite') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/download-artifact@v5
+        with:
+          name: site
+          path: site
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v4
+        with:
+          path: site
+      - name: Deploy to GitHub Pages
+        id: deploy
+        uses: actions/deploy-pages@v4

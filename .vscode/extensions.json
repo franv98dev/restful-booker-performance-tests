@@ -1,0 +1,8 @@
+{
+  "recommendations": [
+    "k6.k6",
+    "dbaeumer.vscode-eslint",
+    "esbenp.prettier-vscode",
+    "ms-azuretools.vscode-docker"
+  ]
+}
